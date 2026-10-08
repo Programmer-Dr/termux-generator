@@ -59,7 +59,7 @@ clean_artifacts() {
 
 # ---------------------------------------------------------------------------
 # Upstream PRs that are NOT yet merged into master of termux-app.
-# Keep this list as URLs to .patch files on GitHub.
+# List PR numbers so we can fetch each PR's head commit directly via git.
 # ---------------------------------------------------------------------------
 UPSTREAM_TERMUX_APP_PRS=(
     5179   # Native RTL text rendering + Arabic/Persian/Urdu/Hebrew shaping
@@ -68,9 +68,14 @@ UPSTREAM_TERMUX_APP_PRS=(
 # Apply the upstream PRs listed above by fetching each PR's head commit
 # into the local clone and checking out the files the PR touches.
 #
-# This avoids both `git apply` (which fails when the PR's base drifts)
-# and raw.githubusercontent.com (which 404s for files only reachable
-# through refs/pull/N/head).
+# This avoids both `git apply` (which fails when the PR's base drifts) and
+# raw.githubusercontent.com (which 404s for files only reachable through
+# refs/pull/N/head).
+#
+# The .patch endpoint is used only as a HINT for which files to look at;
+# the authoritative source is the PR head tree. Files that appear in the
+# patch but are absent from the head (e.g. because the PR author force-
+# pushed and removed them) are silently skipped rather than aborting.
 apply_upstream_pr_patches() {
     local app_dir="$1"
     local repo="termux/termux-app"
@@ -84,7 +89,7 @@ apply_upstream_pr_patches() {
     for pr in "${UPSTREAM_TERMUX_APP_PRS[@]}"; do
         echo "[*] Applying upstream PR #$pr (git fetch + selective checkout)"
 
-        # 1. Fetch the PR head into a local remote-tracking ref.
+        # Fetch the PR head into a local remote-tracking ref.
         if ! git fetch --no-tags "$repo_url" "refs/pull/$pr/head:refs/remotes/pr/$pr"; then
             echo "[!]   Could not fetch PR #$pr from $repo_url"
             popd >/dev/null
@@ -96,10 +101,7 @@ apply_upstream_pr_patches() {
         head_sha=$(git rev-parse "$pr_ref")
         echo "[*]   PR #$pr head SHA: $head_sha"
 
-        # 2. Get the list of files the PR touches, from its patch.
-        #    We can't use `git diff HEAD $pr_ref` because that also shows
-        #    every file master has changed since the PR's base — checking
-        #    those out would silently roll master back.
+        # Use the .patch only to enumerate candidate file paths.
         local patch_file files
         patch_file="$(mktemp)"
         if ! curl -fsSL "https://github.com/$repo/pull/$pr.patch" -o "$patch_file"; then
@@ -121,28 +123,47 @@ apply_upstream_pr_patches() {
             exit 3
         fi
 
-        echo "[*]   Files touched by PR #$pr:"
+        echo "[*]   Files listed in PR #$pr patch:"
         echo "$files" | sed 's/^/        /'
 
-        # 3. Checkout each touched file from the PR head.
+        local applied=0
         local f
         while IFS= read -r f; do
             [ -z "$f" ] && continue
+
+            # Workflow YAMLs from the PR would overwrite our own and are
+            # irrelevant to a fork build, so skip them.
             case "$f" in
                 .github/*)
-                    echo "        [skip] $f (workflow file)"
+                    echo "        [skip]  $f (workflow file)"
                     continue
                     ;;
             esac
-            echo "        [checkout] $f"
+
+            # The .patch may mention files that no longer exist in the PR
+            # head (force-push). The head tree is authoritative.
+            if ! git cat-file -e "$pr_ref:$f" 2>/dev/null; then
+                echo "        [skip]  $f (not present in PR head)"
+                continue
+            fi
+
+            echo "        [apply] $f"
+            mkdir -p "$(dirname "$f")"
             if ! git checkout "$pr_ref" -- "$f"; then
                 echo "        [!] Failed to checkout $f from PR head"
                 popd >/dev/null
                 exit 3
             fi
+            applied=$((applied + 1))
         done <<< "$files"
 
-        echo "[*]   PR #$pr applied."
+        if [ "$applied" -eq 0 ]; then
+            echo "[!]   No files were applied for PR #$pr"
+            popd >/dev/null
+            exit 3
+        fi
+
+        echo "[*]   PR #$pr applied ($applied file(s))."
     done
 
     popd >/dev/null
@@ -161,9 +182,8 @@ download() {
         git clone --depth 1 https://github.com/termux/termux-app.git                    termux-apps-main/termux-app
         git clone --depth 1 https://github.com/termux/termux-gui.git                    termux-apps-main/termux-gui
 
-        # Apply the RTL PR (and any other unmerged upstream PRs) right after the
-        # clone and before the termux-am-library is moved in, so the patch sees
-        # the exact upstream master tree it was written against.
+        # Apply the unmerged upstream PRs (RTL, etc.) right after the clone,
+        # before the termux-am-library is moved in.
         apply_upstream_pr_patches termux-apps-main/termux-app
 
         # special case - for "F-Droid" Termux, it is necessary to move the termux-am-library subfolder of
@@ -414,5 +434,3 @@ move_apks() {
         done
     fi
 }
-
-
