@@ -66,42 +66,49 @@ UPSTREAM_TERMUX_APP_PRS=(
 )
 
 # Apply the upstream PRs listed above by fetching each PR's head commit
-# and replacing the affected files in the freshly cloned termux-app.
+# into the local clone and checking out the files the PR touches.
 #
-# This is more robust than `git apply` when the PR was written against an
-# older master: we don't try to reconcile line offsets or context; we just
-# take the PR author's final version of each touched file.
+# This avoids both `git apply` (which fails when the PR's base drifts)
+# and raw.githubusercontent.com (which 404s for files only reachable
+# through refs/pull/N/head).
 apply_upstream_pr_patches() {
     local app_dir="$1"
     local repo="termux/termux-app"
+    local repo_url="https://github.com/$repo.git"
 
     [ -d "$app_dir" ] || return 0
 
+    pushd "$app_dir" >/dev/null
+
     local pr
     for pr in "${UPSTREAM_TERMUX_APP_PRS[@]}"; do
-        echo "[*] Applying upstream PR #$pr by file replacement"
+        echo "[*] Applying upstream PR #$pr (git fetch + selective checkout)"
 
-        # Ask git for the PR head SHA without consuming GitHub API quota.
-        local head_sha
-        head_sha=$(git ls-remote "https://github.com/$repo.git" "refs/pull/$pr/head" \
-                   | awk '{print $1}')
-
-        if [ -z "$head_sha" ]; then
-            echo "[!]   Could not determine head SHA for PR #$pr"
+        # 1. Fetch the PR head into a local remote-tracking ref.
+        if ! git fetch --no-tags "$repo_url" "refs/pull/$pr/head:refs/remotes/pr/$pr"; then
+            echo "[!]   Could not fetch PR #$pr from $repo_url"
+            popd >/dev/null
             exit 3
         fi
+
+        local pr_ref="refs/remotes/pr/$pr"
+        local head_sha
+        head_sha=$(git rev-parse "$pr_ref")
         echo "[*]   PR #$pr head SHA: $head_sha"
 
-        # Download the PR patch just to enumerate the modified file paths.
-        local patch_file
+        # 2. Get the list of files the PR touches, from its patch.
+        #    We can't use `git diff HEAD $pr_ref` because that also shows
+        #    every file master has changed since the PR's base — checking
+        #    those out would silently roll master back.
+        local patch_file files
         patch_file="$(mktemp)"
         if ! curl -fsSL "https://github.com/$repo/pull/$pr.patch" -o "$patch_file"; then
             echo "[!]   Could not download patch for PR #$pr"
             rm -f "$patch_file"
+            popd >/dev/null
             exit 3
         fi
 
-        local files
         files=$(grep -E '^\+\+\+ b/' "$patch_file" \
                 | sed 's|^+++ b/||' \
                 | grep -v '^/dev/null$' \
@@ -110,40 +117,35 @@ apply_upstream_pr_patches() {
 
         if [ -z "$files" ]; then
             echo "[!]   No files found in PR #$pr patch"
+            popd >/dev/null
             exit 3
         fi
 
-        echo "[*]   Files modified by PR #$pr:"
+        echo "[*]   Files touched by PR #$pr:"
         echo "$files" | sed 's/^/        /'
 
-        pushd "$app_dir" >/dev/null
-
+        # 3. Checkout each touched file from the PR head.
         local f
         while IFS= read -r f; do
             [ -z "$f" ] && continue
-
-            # Workflow YAMLs from the PR would overwrite ours and aren't
-            # used by this build, so skip them.
             case "$f" in
                 .github/*)
                     echo "        [skip] $f (workflow file)"
                     continue
                     ;;
             esac
-
-            echo "        [fetch] $f"
-            mkdir -p "$(dirname "$f")"
-            if ! curl -fsSL "https://raw.githubusercontent.com/$repo/$head_sha/$f" -o "$f"; then
-                echo "        [!] Failed to fetch $f from PR head"
+            echo "        [checkout] $f"
+            if ! git checkout "$pr_ref" -- "$f"; then
+                echo "        [!] Failed to checkout $f from PR head"
                 popd >/dev/null
                 exit 3
             fi
         done <<< "$files"
 
-        popd >/dev/null
-
         echo "[*]   PR #$pr applied."
     done
+
+    popd >/dev/null
 }
 
 # Function to download repositories
