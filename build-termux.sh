@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e -u -o pipefail
+
 # Change to the directory where this script is located
 cd "$(realpath "$(dirname "$0")")"
 
@@ -8,7 +9,7 @@ TERMUX_APP__PACKAGE_NAME="com.termux"
 TERMUX_APP_TYPE="f-droid"
 DO_NOT_CLEAN=""
 TERMUX_GENERATOR_PLUGIN=""
-ADDITIONAL_PACKAGES="xkeyboard-config" # for termux-x11-nightly which is always preinstalled
+ADDITIONAL_PACKAGES="xkeyboard-config"
 BOOTSTRAP_ARCHITECTURES=""
 DISABLE_BOOTSTRAP_SECOND_STAGE=""
 ENABLE_SSH_SERVER=""
@@ -28,119 +29,33 @@ source "$TERMUX_GENERATOR_HOME/scripts/termux_generator_utils.sh"
 source "$TERMUX_GENERATOR_HOME/scripts/termux_generator_steps.sh"
 source "$TERMUX_GENERATOR_HOME/scripts/termux_generator_all.sh"
 
-# Show help
 show_usage() {
+    echo "Usage: $0 [--name <pkg>] [--type f-droid|play-store] ..."
 }
 
-# Process arguments
 while (($# > 0)); do
     case "$1" in
-        -d|--dirty)
-            DO_NOT_CLEAN=1
-            ;;
-        -h|--help)
-            show_usage
-            exit 0
-            ;;
+        -d|--dirty) DO_NOT_CLEAN=1 ;;
+        -h|--help) show_usage; exit 0 ;;
         -a|--add)
-            if [ $# -gt 1 ] && [ -n "$2" ] && [[ $2 != -* ]]; then
-                ADDITIONAL_PACKAGES+=",$2"
-                shift 1
-            else
-                echo "[!] Option '--add' requires an argument."
-                show_usage
-                exit 1
-            fi
-            ;;
-        -n|--name)
-            if [ $# -gt 1 ] && [ -n "$2" ] && [[ $2 != -* ]]; then
-                TERMUX_APP__PACKAGE_NAME="$2"
-                shift 1
-            else
-                echo "[!] Option '--name' requires an argument."
-                show_usage
-                exit 1
-            fi
-            ;;
-        -t|--type)
-            if [ $# -gt 1 ] && [ -n "$2" ] && [[ $2 != -* ]]; then
-                case "$2" in
-                    f-droid) TERMUX_APP_TYPE="$2" ;;
-                    play-store) TERMUX_APP_TYPE="$2" ;;
-                    *)
-                        echo "[!] Unsupported app type '$2'. Choose one of: [f-droid, play-store]."
-                        show_usage
-                        exit 1
-                        ;;
-                esac
-                shift 1
-            else
-                echo "[!] Option '--type' requires an argument."
-                show_usage
-                exit 1
-            fi
-            ;;
-        --architectures)
-            if [ $# -gt 1 ] && [ -n "$2" ] && [[ $2 != -* ]]; then
-                BOOTSTRAP_ARCHITECTURES="$2"
-                shift 1
-            else
-                echo "[!] Option '--architectures' requires an argument."
-                show_usage
-                return 1
-            fi
-            ;;
-        -p|--plugin)
-            if [ $# -gt 1 ] && [ -n "$2" ] && [[ $2 != -* ]]; then
-                TERMUX_GENERATOR_PLUGIN="$2"
-                shift 1
-            else
-                echo "[!] Option '--plugin' requires an argument."
-                show_usage
-                exit 1
-            fi
-            ;;
-        --disable-bootstrap-second-stage)
-            DISABLE_BOOTSTRAP_SECOND_STAGE=1
-            ;;
-        --enable-ssh-server)
-            ENABLE_SSH_SERVER=1
-            ;;
-        --disable-bootstrap)
-            DISABLE_BOOTSTRAP=1
-            ;;
-        --disable-terminal)
-            DISABLE_TERMINAL=1
-            ;;
-        --disable-tasker)
-            DISABLE_TASKER=1
-            ;;
-        --disable-float)
-            DISABLE_FLOAT=1
-            ;;
-        --disable-widget)
-            DISABLE_WIDGET=1
-            ;;
-        --disable-api)
-            DISABLE_API=1
-            ;;
-        --disable-boot)
-            DISABLE_BOOT=1
-            ;;
-        --disable-styling)
-            DISABLE_STYLING=1
-            ;;
-        --disable-gui)
-            DISABLE_GUI=1
-            ;;
-        --disable-x11)
-            DISABLE_X11=1
-            ;;
-        *)
-            echo "[!] Unknown option '$1'"
-            show_usage
-            exit 1
-            ;;
+            ADDITIONAL_PACKAGES+=",$2"; shift 1 ;;
+        -n|--name) TERMUX_APP__PACKAGE_NAME="$2"; shift 1 ;;
+        -t|--type) TERMUX_APP_TYPE="$2"; shift 1 ;;
+        --architectures) BOOTSTRAP_ARCHITECTURES="$2"; shift 1 ;;
+        -p|--plugin) TERMUX_GENERATOR_PLUGIN="$2"; shift 1 ;;
+        --disable-bootstrap-second-stage) DISABLE_BOOTSTRAP_SECOND_STAGE=1 ;;
+        --enable-ssh-server) ENABLE_SSH_SERVER=1 ;;
+        --disable-bootstrap) DISABLE_BOOTSTRAP=1 ;;
+        --disable-terminal) DISABLE_TERMINAL=1 ;;
+        --disable-tasker) DISABLE_TASKER=1 ;;
+        --disable-float) DISABLE_FLOAT=1 ;;
+        --disable-widget) DISABLE_WIDGET=1 ;;
+        --disable-api) DISABLE_API=1 ;;
+        --disable-boot) DISABLE_BOOT=1 ;;
+        --disable-styling) DISABLE_STYLING=1 ;;
+        --disable-gui) DISABLE_GUI=1 ;;
+        --disable-x11) DISABLE_X11=1 ;;
+        *) echo "[!] Unknown option '$1'"; show_usage; exit 1 ;;
     esac
     shift 1
 done
@@ -148,7 +63,6 @@ done
 TERMUX_GENERATOR_CONTAINER_NAME="$TERMUX_APP__PACKAGE_NAME-$TERMUX_APP_TYPE-package-builder"
 
 if [ -z "${DO_NOT_CLEAN}" ]; then
-    # Validation and execution
     check_names
     clean_docker
     clean_artifacts
@@ -177,5 +91,3 @@ if [[ "$TERMUX_APP_TYPE" == "f-droid" ]] || [ -z "${DISABLE_TERMINAL}" ]; then
 fi
 
 exit 0
-
-
