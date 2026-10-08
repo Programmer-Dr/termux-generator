@@ -1,4 +1,4 @@
-# Funktion, um den Paketnamen zu überprüfen
+# Function to validate the package name
 check_names() {
     if [[ $TERMUX_APP__PACKAGE_NAME =~ '_' ]] || \
        [[ $TERMUX_APP__PACKAGE_NAME =~ '-' ]] || \
@@ -57,7 +57,45 @@ clean_artifacts() {
     rm -rf termux* *.apk *.deb *.xz *.zip 2>/dev/null
 }
 
-# Funktion, um Repositories herunterzuladen
+# ---------------------------------------------------------------------------
+# Upstream PRs that are NOT yet merged into master of termux-app.
+# Keep this list as URLs to .patch files on GitHub.
+# ---------------------------------------------------------------------------
+UPSTREAM_TERMUX_APP_PRS=(
+    "https://github.com/termux/termux-app/pull/5179.patch"   # Native RTL text rendering + Arabic/Persian/Urdu/Hebrew shaping
+)
+
+# Apply the upstream PRs listed above to the freshly cloned termux-app.
+apply_upstream_pr_patches() {
+    local app_dir="$1"
+    [ -d "$app_dir" ] || return 0
+
+    pushd "$app_dir" >/dev/null
+
+    local url
+    for url in "${UPSTREAM_TERMUX_APP_PRS[@]}"; do
+        echo "[*] Applying upstream PR patch: $url"
+        if curl -fsSL "$url" | git apply --whitespace=nowarn; then
+            echo "[*]   applied cleanly with 'git apply'."
+            continue
+        fi
+
+        echo "[*]   'git apply' failed; retrying with 'patch -p1 --forward'..."
+        if curl -fsSL "$url" | patch -p1 --forward --no-backup-if-mismatch; then
+            echo "[*]   applied with 'patch'."
+        else
+            echo "[!]   Failed to apply $url."
+            echo "[!]   This usually means the PR's base commit has drifted from master."
+            echo "[!]   Aborting so you don't silently build the wrong code."
+            popd >/dev/null
+            exit 3
+        fi
+    done
+
+    popd >/dev/null
+}
+
+# Function to download repositories
 download() {
     if [[ "$TERMUX_APP_TYPE" == "f-droid" ]]; then
         git clone --depth 1 https://github.com/termux/termux-packages.git               termux-packages-main
@@ -69,6 +107,12 @@ download() {
         git clone --depth 1 https://github.com/termux/termux-styling.git                termux-apps-main/termux-styling
         git clone --depth 1 https://github.com/termux/termux-app.git                    termux-apps-main/termux-app
         git clone --depth 1 https://github.com/termux/termux-gui.git                    termux-apps-main/termux-gui
+
+        # Apply the RTL PR (and any other unmerged upstream PRs) right after the
+        # clone and before the termux-am-library is moved in, so the patch sees
+        # the exact upstream master tree it was written against.
+        apply_upstream_pr_patches termux-apps-main/termux-app
+
         # special case - for "F-Droid" Termux, it is necessary to move the termux-am-library subfolder of
         # the termux-am-library repository, which contains its actual code, into the termux-app folder,
         # where its code needs to be patched and compiled into the main "F-Droid" Termux APK
@@ -78,6 +122,7 @@ download() {
     else
         git clone --depth 1 https://github.com/termux-play-store/termux-packages.git    termux-packages-main
         git clone --depth 1 https://github.com/termux-play-store/termux-apps.git        termux-apps-main
+        apply_upstream_pr_patches termux-apps-main/termux-app
     fi
     git clone --depth 1 --recursive https://github.com/termux/termux-x11.git        termux-apps-main/termux-x11
 }
@@ -87,7 +132,7 @@ install_plugin() {
     apply_patches "plugins/$TERMUX_GENERATOR_PLUGIN/$TERMUX_APP_TYPE-patches/app-patches" termux-apps-main
 }
 
-# Funktion, um Bootstrap-Patches anzuwenden
+# Function to apply bootstrap patches
 patch_bootstraps() {
     # The reason why it is necessary to replace the name first, then patch bootstraps, but do the reverse for apps,
     # is because command-not-found must be partially unpatched back to the default TERMUX_PREFIX to build,
@@ -127,7 +172,7 @@ EOF
     rm -rf termux-packages-main/packages/zeronet # https://github.com/termux/termux-packages/pull/25367
 }
 
-# Funktion, um die App zu patchen
+# Function to patch the app
 patch_apps() {
     apply_patches "$TERMUX_APP_TYPE-patches/app-patches" termux-apps-main
 
@@ -142,12 +187,9 @@ patch_apps() {
 
 build_termux_x11() {
     pushd termux-apps-main/termux-x11
-
     ./gradlew assembleDebug
-
     popd
 }
-
 
 move_termux_x11_deb() {
     pushd termux-apps-main/termux-x11
@@ -164,7 +206,7 @@ move_termux_x11_deb() {
     popd
 }
 
-# Funktion, um Bootstraps zu erstellen
+# Function to build bootstraps
 build_bootstraps() {
     pushd termux-packages-main
 
@@ -219,7 +261,7 @@ build_bootstraps() {
     popd
 }
 
-# Funktion, um Bootstraps zu kopieren
+# Function to move bootstraps
 move_bootstraps() {
     if [[ "$TERMUX_APP_TYPE" == "f-droid" ]]; then
         local app_assets_dir="app/src/main/assets/"
@@ -239,7 +281,7 @@ move_bootstraps() {
     fi
 }
 
-# Funktion, um die App zu bauen
+# Function to build the app
 build_apps() {
     pushd termux-apps-main
 
@@ -292,7 +334,7 @@ build_apps() {
     popd
 }
 
-# Funktion, um die APK zu kopieren
+# Function to move APKs
 move_apks() {
     if [[ "$TERMUX_APP_TYPE" == "f-droid" ]]; then
         local build_dir="app/build/outputs/apk/debug"
