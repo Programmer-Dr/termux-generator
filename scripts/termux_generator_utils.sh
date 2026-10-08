@@ -30,8 +30,8 @@ replace_termux_name() {
     local replacement_name_slash="$(echo "$replacement_name" | tr . /)"
 
     pushd "$targetdir"
-    
-    # Nur Textdateien bearbeiten, um Fehler zu vermeiden
+
+    # Only edit text files to avoid errors
     local file
     find . -type f -exec file {} + | grep "text" | cut -d: -f1 | while read -r file; do
         portable_sed_i -e "s|>Termux<|>$replacement_name<|g" \
@@ -45,7 +45,7 @@ replace_termux_name() {
     popd
 }
 
-# Funktion, um Ordner zu migrieren
+# Function to migrate folders
 migrate_termux_folder() {
     if [[ "$TERMUX_APP__PACKAGE_NAME" == "com.termux" ]]; then
         return
@@ -72,7 +72,7 @@ migrate_termux_folder_tree() {
 
     pushd "$targetdir"
 
-    # Vollständig macOS-kompatible Variante für Verzeichnismigration
+    # Fully macOS-compatible variant for directory migration
     local dir
     find "$(pwd)" -type d -name termux | grep -v -e 'shared/termux' -e 'settings/termux' | while read -r dir; do
         migrate_termux_folder "$dir" "$replacement_name"
