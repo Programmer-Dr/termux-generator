@@ -177,3 +177,5 @@ if [[ "$TERMUX_APP_TYPE" == "f-droid" ]] || [ -z "${DISABLE_TERMINAL}" ]; then
 fi
 
 exit 0
+
+
