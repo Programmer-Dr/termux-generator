@@ -62,37 +62,88 @@ clean_artifacts() {
 # Keep this list as URLs to .patch files on GitHub.
 # ---------------------------------------------------------------------------
 UPSTREAM_TERMUX_APP_PRS=(
-    "https://github.com/termux/termux-app/pull/5179.patch"   # Native RTL text rendering + Arabic/Persian/Urdu/Hebrew shaping
+    5179   # Native RTL text rendering + Arabic/Persian/Urdu/Hebrew shaping
 )
 
-# Apply the upstream PRs listed above to the freshly cloned termux-app.
+# Apply the upstream PRs listed above by fetching each PR's head commit
+# and replacing the affected files in the freshly cloned termux-app.
+#
+# This is more robust than `git apply` when the PR was written against an
+# older master: we don't try to reconcile line offsets or context; we just
+# take the PR author's final version of each touched file.
 apply_upstream_pr_patches() {
     local app_dir="$1"
+    local repo="termux/termux-app"
+
     [ -d "$app_dir" ] || return 0
 
-    pushd "$app_dir" >/dev/null
+    local pr
+    for pr in "${UPSTREAM_TERMUX_APP_PRS[@]}"; do
+        echo "[*] Applying upstream PR #$pr by file replacement"
 
-    local url
-    for url in "${UPSTREAM_TERMUX_APP_PRS[@]}"; do
-        echo "[*] Applying upstream PR patch: $url"
-        if curl -fsSL "$url" | git apply --whitespace=nowarn; then
-            echo "[*]   applied cleanly with 'git apply'."
-            continue
-        fi
+        # Ask git for the PR head SHA without consuming GitHub API quota.
+        local head_sha
+        head_sha=$(git ls-remote "https://github.com/$repo.git" "refs/pull/$pr/head" \
+                   | awk '{print $1}')
 
-        echo "[*]   'git apply' failed; retrying with 'patch -p1 --forward'..."
-        if curl -fsSL "$url" | patch -p1 --forward --no-backup-if-mismatch; then
-            echo "[*]   applied with 'patch'."
-        else
-            echo "[!]   Failed to apply $url."
-            echo "[!]   This usually means the PR's base commit has drifted from master."
-            echo "[!]   Aborting so you don't silently build the wrong code."
-            popd >/dev/null
+        if [ -z "$head_sha" ]; then
+            echo "[!]   Could not determine head SHA for PR #$pr"
             exit 3
         fi
-    done
+        echo "[*]   PR #$pr head SHA: $head_sha"
 
-    popd >/dev/null
+        # Download the PR patch just to enumerate the modified file paths.
+        local patch_file
+        patch_file="$(mktemp)"
+        if ! curl -fsSL "https://github.com/$repo/pull/$pr.patch" -o "$patch_file"; then
+            echo "[!]   Could not download patch for PR #$pr"
+            rm -f "$patch_file"
+            exit 3
+        fi
+
+        local files
+        files=$(grep -E '^\+\+\+ b/' "$patch_file" \
+                | sed 's|^+++ b/||' \
+                | grep -v '^/dev/null$' \
+                | sort -u)
+        rm -f "$patch_file"
+
+        if [ -z "$files" ]; then
+            echo "[!]   No files found in PR #$pr patch"
+            exit 3
+        fi
+
+        echo "[*]   Files modified by PR #$pr:"
+        echo "$files" | sed 's/^/        /'
+
+        pushd "$app_dir" >/dev/null
+
+        local f
+        while IFS= read -r f; do
+            [ -z "$f" ] && continue
+
+            # Workflow YAMLs from the PR would overwrite ours and aren't
+            # used by this build, so skip them.
+            case "$f" in
+                .github/*)
+                    echo "        [skip] $f (workflow file)"
+                    continue
+                    ;;
+            esac
+
+            echo "        [fetch] $f"
+            mkdir -p "$(dirname "$f")"
+            if ! curl -fsSL "https://raw.githubusercontent.com/$repo/$head_sha/$f" -o "$f"; then
+                echo "        [!] Failed to fetch $f from PR head"
+                popd >/dev/null
+                exit 3
+            fi
+        done <<< "$files"
+
+        popd >/dev/null
+
+        echo "[*]   PR #$pr applied."
+    done
 }
 
 # Function to download repositories
